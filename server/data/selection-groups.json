@@ -1,0 +1,20 @@
+{
+  "selection_groups": [
+    {
+      "id": "9Ydq62Gza_Uhwk7z-p3gs",
+      "name": "Demo Group1",
+      "created_at": "2025-01-01T00:00:00.000Z",
+      "updated_at": "2025-08-11T07:23:31.627Z",
+      "timeframes": {
+        "episode 1": {
+          "start": 0,
+          "end": 12.04787234042553
+        },
+        "episode 2": {
+          "start": 15.23936170212766,
+          "end": 25.686170212765962
+        }
+      }
+    }
+  ]
+}
