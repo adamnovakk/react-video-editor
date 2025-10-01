@@ -15,7 +15,7 @@ import { generateId } from "@designcombo/timeline";
 import { Button } from "@/components/ui/button";
 import useUploadStore from "../store/use-upload-store";
 import ModalUpload from "@/components/modal-upload";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSelectionGroups, fetchSelectionGroupById, createSelectionGroup, updateSelectionGroup } from "@/hooks/use-selection-groups";
 import { useSelectionStore } from "@/store/use-selection-store";
@@ -36,6 +36,15 @@ export const Uploads = () => {
 	const [saveOpen, setSaveOpen] = useState(false);
 	const [saveName, setSaveName] = useState<string>("");
 
+	const uploadBtnRef = useRef<HTMLButtonElement | null>(null);
+	useEffect(() => {
+		uploadBtnRef.current?.focus();
+	}, []);
+
+	// per-item downloading progress when adding to timeline
+	const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+	const [progressByKey, setProgressByKey] = useState<Record<string, number>>({});
+
 	// Group completed uploads by type
 	const videos = uploads.filter(
 		(upload) => upload.type?.startsWith("video/") || upload.type === "video",
@@ -47,25 +56,72 @@ export const Uploads = () => {
 		(upload) => upload.type?.startsWith("audio/") || upload.type === "audio",
 	);
 
-	const handleAddVideo = (video: any) => {
-		const srcVideo = video.metadata?.uploadedUrl || video.url;
+	async function downloadWithProgress(url: string, onProgress: (pct: number) => void): Promise<string> {
+		const res = await fetch(url);
+		if (!res.ok || !res.body) {
+			throw new Error("Failed to fetch media");
+		}
+		const contentLengthHeader = res.headers.get("Content-Length");
+		const total = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+		const reader = res.body.getReader();
+		const chunks: Uint8Array[] = [];
+		let received = 0;
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				if (value) {
+					chunks.push(value);
+					received += value.length;
+					if (total > 0) {
+						onProgress(Math.min(99, Math.round((received / total) * 100)));
+					} else {
+						// No length header; emit a conservative ramp up
+						onProgress(Math.min(95, Math.round(received / 500000)));
+					}
+				}
+			}
+		} finally {
+			try { reader.releaseLock?.(); } catch {}
+		}
+		onProgress(100);
+		const blob = new Blob(chunks, { type: res.headers.get("Content-Type") || "video/mp4" });
+		const blobUrl = URL.createObjectURL(blob);
+		return blobUrl;
+	}
 
-		dispatch(ADD_VIDEO, {
-			payload: {
-				id: generateId(),
-				details: {
-					src: srcVideo,
+	const handleAddVideoAfterDownload = async (video: any, itemKey: string) => {
+		try {
+			const srcVideo = video.metadata?.uploadedUrl || video.url;
+			setDownloadingKey(itemKey);
+			setProgressByKey((s) => ({ ...s, [itemKey]: 0 }));
+			const blobUrl = await downloadWithProgress(srcVideo, (pct) => {
+				setProgressByKey((s) => ({ ...s, [itemKey]: pct }));
+			});
+
+			dispatch(ADD_VIDEO, {
+				payload: {
+					id: generateId(),
+					details: {
+						src: blobUrl,
+					},
+					metadata: {
+						previewUrl:
+							"https://cdn.designcombo.dev/caption_previews/static_preset1.webp",
+					},
 				},
-				metadata: {
-					previewUrl:
-						"https://cdn.designcombo.dev/caption_previews/static_preset1.webp",
+				options: {
+					resourceId: "main",
+					scaleMode: "fit",
 				},
-			},
-			options: {
-				resourceId: "main",
-				scaleMode: "fit",
-			},
-		});
+			});
+		} catch (e: any) {
+			toast.error(e?.message ?? "Failed to add video");
+		} finally {
+			setTimeout(() => {
+				setDownloadingKey((k) => (k === itemKey ? null : k));
+			}, 300);
+		}
 	};
 
 	const handleAddImage = (image: any) => {
@@ -105,7 +161,7 @@ export const Uploads = () => {
 
 	const UploadPrompt = () => (
 		<div className="flex flex-col px-4 gap-2">
-			<Button className="w-full cursor-pointer" onClick={() => setShowUploadModal(true)}>
+			<Button ref={uploadBtnRef} className="w-full cursor-pointer" onClick={() => setShowUploadModal(true)}>
 				<UploadIcon className="w-4 h-4" />
 				<span className="ml-2">Upload</span>
 			</Button>
@@ -284,22 +340,41 @@ export const Uploads = () => {
 						</div>
 						<ScrollArea className="max-h-32">
 							<div className="grid grid-cols-3 gap-2 max-w-full">
-								{videos.map((video, idx) => (
-									<div
-										className="flex items-center gap-2 flex-col w-full"
-										key={video.id || idx}
-									>
-										<Card
-											className="w-16 h-16 flex items-center justify-center overflow-hidden relative cursor-pointer"
-											onClick={() => handleAddVideo(video)}
+								{videos.map((video, idx) => {
+									const itemKey = String(
+										video.id || video.filePath || video.file?.name || idx,
+									);
+									const isDownloading = downloadingKey === itemKey;
+									const pct = progressByKey[itemKey] ?? 0;
+									return (
+										<div
+											className="flex items-center gap-2 flex-col w-full"
+											key={itemKey}
 										>
-											<VideoIcon className="w-8 h-8 text-muted-foreground" />
-										</Card>
-										<div className="text-xs text-muted-foreground truncate w-full text-center">
-											{video.file?.name || video.url || "Video"}
+											<Card
+												className="w-16 h-16 flex items-center justify-center overflow-hidden relative cursor-pointer"
+												onClick={() => {
+													if (isDownloading) return;
+													handleAddVideoAfterDownload(video, itemKey);
+												}}
+												aria-busy={isDownloading}
+												style={{ pointerEvents: isDownloading ? "none" : undefined }}
+											>
+												{isDownloading ? (
+													<div className="absolute inset-0 flex items-center justify-center bg-background/60">
+														<Loader2 className="w-4 h-4 animate-spin mr-1 text-muted-foreground" />
+														<span className="text-xs font-medium">{pct}%</span>
+													</div>
+												) : (
+													<VideoIcon className="w-8 h-8 text-muted-foreground" />
+												)}
+											</Card>
+											<div className="text-xs text-muted-foreground truncate w-full text-center">
+												{video.file?.name || video.url || "Video"}
+											</div>
 										</div>
-									</div>
-								))}
+									);
+								})}
 							</div>
 						</ScrollArea>
 					</div>
