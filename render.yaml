@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: selection-groups-api
+    env: node
+    plan: free
+    region: oregon
+    autoDeploy: true
+    buildCommand: pnpm i --frozen-lockfile
+    startCommand: pnpm run server
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/server/data
+      sizeGB: 1 

@@ -10,7 +10,7 @@ export interface DatabaseData {
   selection_groups: SelectionGroupsTable[];
 }
 
-let dbPromise: Promise<ReturnType<typeof JSONFilePreset<DatabaseData>>> | null = null;
+let dbPromise: ReturnType<typeof JSONFilePreset<DatabaseData>> | null = null;
 
 function ensureDirExists(dirPath: string) {
   if (!fs.existsSync(dirPath)) {
